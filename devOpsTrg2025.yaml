@@ -1,0 +1,426 @@
+# Start of a new base lab in EKS cluster
+#
+# My deployment command before doing so need to set the env GIT_K8SBASELABNEW to my GitHub token. 
+# Do this as needed in the local terminal.
+#
+# envsubst < k8sbaselabnew/k8s-base-lab.yaml  | helm upgrade --install abjdsLab pingidentity/ping-devops -f - --description "update lab app in console"
+#
+# I change the description with a brief summary of why I am deploying
+#
+global:
+  ingress:
+    enabled: true
+    addReleaseNameToHost: append
+    defaultDomain: ping-ps-aws.com
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      kubernetes.io/ingress.class: "nginx-public"
+  vault:
+    enabled: true
+    hashicorp:
+      annotations:
+        role: ping-ps-aws-us-west-2
+        serviceAccountName: vault-auth
+      secretPrefix: secret/andrewblackwell@pingidentity.com/ping-devops-andrewblackwell/
+      secrets:
+        # PA_ADMIN_PASSWORD:
+        #   to-json:
+        #     file: PA_ADMIN_PASSWORD
+
+        #Use the secrets I setup for original k8sbaselab
+        devops-secret.env:
+          to-json:
+            file: devops-secret.env
+        directory:
+          ROOT_USER_PASSWORD_FILE:
+            path: /run/secrets
+            file: root-user-password
+          ADMIN_USER_PASSWORD_FILE:
+            path: /run/secrets
+            file: admin-user-password
+          ENCRYPTION_PASSWORD_FILE:
+            path: /run/secrets
+            file: encryption-password
+        # pingaccessKeys:
+          # PA_JWK:
+          #   path: /opt/in/instance/conf
+          #   file: pa.jwk
+          # PA_JWK_PROPERTIES:
+          #   path: /opt/in/instance/conf
+          #   file: pa.jwk.properties
+
+
+pingdataconsole:
+  enabled: true
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingdataconsole
+    SERVER_PROFILE_UPDATE: "true"
+    DEPLOY_UPDATE_FLAG: "1"
+    # GCD_ENV: ${HELM_VALUES_GCD_ENV}
+
+  image:
+      tag: 2502-10.2.0.0
+  # env:
+  #   - name: _GCD_ENV
+  #     value: ${HELM_VALUES_GCD_ENV}
+
+pingdirectory:
+  enabled: true
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingdirectory
+    FIPS_MODE_ON: "false"
+    DEPLOY_UPDATE_FLAG: "0"
+    # USER_BASE_DN: "dc=whatever,dc=com"
+    # MAX_HEAP_SIZE: "2g"
+    # VERBOSE: "true"
+
+  image:
+      tag: 2411-10.1.0.2
+  container:
+    replicaCount: 1
+    resources:
+      requests:
+        memory: 3Gi
+      limits:
+        memory: 3Gi
+
+pingfederate-admin:
+  enabled: true
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingfederate
+    PF_CONSOLE_AUTHENTICATION: native
+    PF_ADMIN_API_AUTHENTICATION: native
+    PF_LOG_LEVEL: INFO
+    PF_PROVISIONER_MODE: "OFF"
+    SERVER_PROFILE_UPDATE: "true"
+    # PF_ADMIN_PORT: "9998"
+    DEPLOY_UPDATE_FLAG: "0"
+
+  waitFor:
+    pingdirectory:
+      service: ldaps
+      timeoutSeconds: 600
+
+  image:
+      tag: 2412-12.2.0
+
+  workload:
+    type: StatefulSet
+
+
+pingfederate-engine:
+  enabled: true
+  envs:
+    # Need server profile so hivemodule.xml gets picked up
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingfederate
+    PF_LOG_LEVEL: DEBUG
+    SERVER_PROFILE_UPDATE: "true"
+    TAIL_LOG_FILES: "/opt/out/instance/log/server.log /opt/out/instance/log/audit.log"
+
+    DEPLOY_UPDATE_FLAG: "0"
+
+  waitFor:
+    pingfederate-admin:
+      service: https
+      timeoutSeconds: 600
+
+  image:
+      tag: 2412-12.2.0
+
+  # workload:
+            # urls = ["https://pingfederate-engine-k8sbaselabnew.ping-ps-aws.com/pf/heartbeat.ping"]
+
+            # urls = ["https://localhost:9031/pf/heartbeat.ping"]
+        # [agent]
+        #   debug=true
+          # json_query = "items"
+
+        # [[outputs.file]]
+        #   files = ["stdout"]
+
+      # telegraf.influxdata.com/outputs: |+
+      #   [[outputs.file]]
+      #     files = ["stdout"]
+      #   [agent]
+      #     debug = true
+          # json_query = "items"
+          # name_override = "pingfederate_heartbeat"
+          # json_query = "items.0"
+
+
+    # annotations:
+    #   telegraf.influxdata.com/inputs: |+
+
+    #     [[inputs.http]]
+    #       urls = ["https://pingfederate-engine-k8sbaselabnew.ping-ps-aws.com/pf/heartbeat.ping"]
+    #       data_format = "json"
+    #       insecure_skip_verify = false
+    #       json_query = "items.0"
+
+    #     [agent]
+    #       debug = true
+
+    #     [[outputs.file]]
+    #       files = ["stdout"]
+
+
+
+
+    #   telegraf.influxdata.com/class: prometheus
+
+    #   prometheus.io/scrape: "true"
+    #   prometheus.io/path: /metrics
+    #   prometheus.io/port: "9273"
+
+
+  container:
+    replicaCount: 1
+
+    # affinity:
+    #   nodeAffinity:
+    #     requiredDuringSchedulingIgnoredDuringExecution:
+    #       nodeSelectorTerms:
+    #         - matchExpressions:
+    #             - key: alpha.eksctl.io/nodegroup-name
+    #               operator: In
+    #               values:
+    #                 - base-r5-xlarge
+
+
+# the following is to add a second host to PingFederate engine as a new virtual host
+  ingress:
+    # annotations:
+      # Enable client certificate authentication don't require CA match
+      # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+      # Create the secret containing the trusted ca certificates
+      # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
+      # Specify the verification depth in the client certificates chain
+      # nginx.ingress.kubernetes.io/auth-tls-verify-depth: "1"
+      # Specify an error page to be redirected to verification errors
+      # nginx.ingress.kubernetes.io/auth-tls-error-page: "http://www.mysite.com/error-cert.html"
+      # Specify if certificates are passed to upstream server
+      # nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    hosts:
+      - host: pingfederate-engine._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: https
+      - host: pingfederate._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: https
+    tls:
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pingfederate-engine._defaultDomain_
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pingfederate._defaultDomain_
+
+pingaccess-admin:
+
+  #The following secrets are only for PA
+  vault:
+    enabled: true
+    hashicorp:
+      annotations:
+        role: ping-ps-aws-us-west-2
+        serviceAccountName: vault-auth
+      secretPrefix: secret/andrewblackwell@pingidentity.com/ping-devops-andrewblackwell/
+      secrets:
+        pingaccessKeys:
+          PA_JWK:
+            path: /opt/in/instance/conf
+            file: pa.jwk
+          PA_JWK_PROPERTIES:
+            path: /opt/in/instance/conf
+            file: pa.jwk.properties
+
+  enabled: true
+  privateCert:
+    generate: false
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingaccess
+    SERVER_PROFILE_UPDATE: "true"
+    DEPLOY_UPDATE_FLAG: "1"
+    # Indicates that this a new image and want the product bits copied over.
+    # Used by hook: 06-copy-product-bits.sh.post
+    PINGACCESS_UPGRADE: "false"
+  image:
+      # tag: 2209-7.1.2
+      # tag: 2310-7.3.2
+      tag: 2411-8.1.2
+
+pingaccess-engine:
+  enabled: true
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingaccess-engine
+    SERVER_PROFILE_UPDATE: "true"
+    VERBOSE: "false"
+    DEPLOY_UPDATE_FLAG: "1"
+  waitFor:
+    pingaccess-admin:
+      service: https
+      timeoutSeconds: 600
+
+  image:
+      # tag: 2209-7.1.2
+      # tag: 2310-7.3.2
+      tag: 2411-8.1.2
+
+  # workload:
+  #   type: Deployment
+  #   annotations:
+  #     telegraf.influxdata.com/inputs: |+
+  #       [[inputs.http]]
+  #         urls = ["https://localhost:3000/pa/heartbeat.ping"]
+  #         name_override = "pingaccess_heartbeat"
+  #         data_format = "json"
+  #         insecure_skip_verify = true
+  #         json_query = "items"
+  #     telegraf.influxdata.com/class: prometheus
+  #     prometheus.io/scrape: "true"
+  #     prometheus.io/path: /metrics
+  #     prometheus.io/port: "9273"
+
+  container:
+    replicaCount: 1
+
+    # affinity:
+    #   nodeAffinity:
+    #     requiredDuringSchedulingIgnoredDuringExecution:
+    #       nodeSelectorTerms:
+    #         - matchExpressions:
+    #             - key: alpha.eksctl.io/nodegroup-name
+    #               operator: In
+    #               values:
+    #                 - base-r5-xlarge
+
+# the following is to add a second host to PingAccess engine as a new virtual host
+  ingress:
+    hosts:
+      - host: pingaccess-engine._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix   
+          backend:
+            serviceName: https
+      - host: pingaccess._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: https
+      - host: pa-apps._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: https
+    tls:
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pingaccess-engine._defaultDomain_
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pingaccess._defaultDomain_
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pa-apps._defaultDomain_
+
+pingauthorize:
+  enabled: true
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingauthorize
+    VERBOSE: "false"
+    DEPLOY_UPDATE_FLAG: "0"
+
+  image:
+    tag: 2502-10.2.0.0
+
+  waitFor:
+    pingdirectory:
+      service: ldaps
+      timeoutSeconds: 600
+
+  services:
+    https:
+      servicePort: 443
+      containerPort: 1443
+      ingressPort: 443
+      dataService: true
+    ldaps:
+      servicePort: 636
+      containerPort: 1636
+      dataService: true
+      clusterService: true
+    clusterServiceName: pingauthorize-cluster
+
+
+pingauthorizepap:
+  enabled: true
+  envs:
+    SERVER_PROFILE_URL: https://andrewblackwell-pingidentity2:${GIT_K8SBASELABNEW}@github.com/andrewblackwell-pingidentity2/k8sbaselabnew.git
+    SERVER_PROFILE_PATH: baseline/pingauthorizepap
+    VERBOSE: "false"
+    HTTPS_PORT: "8443"
+    PING_EXTERNAL_BASE_URL: pingauthorizepap-abjdsLab.ping-ps-aws.com
+    PING_OIDC_CONFIGURATION_ENDPOINT: https://pingfederate-engine-abjdsLab.ping-ps-aws.com/.well-known/openid-configuration
+    PING_CLIENT_ID: pap_client
+    PING_SCOPE: "openid email profile"
+    # CLEAN_STAGING_DIR: "true"
+    DEPLOY_UPDATE_FLAG: "0"
+
+  image:
+    tag: 2502-10.2.0.0
+
+  workload:
+    type: StatefulSet
+
+  waitFor:
+    pingauthorize:
+      service: https
+      timeoutSeconds: 300
+
+# pingdatasync:
+#   enabled: false
+#   envs:
+#     DEPLOY_UPDATE_FLAG: "1"
+#   services:
+#     https:
+#       servicePort: 443
+#       containerPort: 1443
+#       ingressPort: 443
+#       dataService: true
+#     ldaps:
+#       servicePort: 636
+#       containerPort: 1636
+#       dataService: true
+#       clusterService: true
+
+# pingdirectoryproxy:
+#   enabled: false
+#   envs:
+#     DEPLOY_UPDATE_FLAG: "1"
+#   services:
+#     https:
+#       servicePort: 443
+#       containerPort: 1443
+#       ingressPort: 443
+#       dataService: true
+#     ldaps:
+#       servicePort: 636
+#       containerPort: 1636
+#       dataService: true
+#       clusterService: true
